@@ -8,7 +8,7 @@ This is a python implementation of the algorithm in the paper ["Conditional Inde
 The only significant dependencies are python 3.6 or later and tensorflow version x
 
 ## First steps
-To get started, check Example_use_case.ipynb which will guide you through the test from the beginning. 
+To get started, check *Tutorial.ipynb* which will guide you through the test from the beginning. 
 
 If you have questions or comments about anything regarding this work, please do not hesitate to contact [Alexis](https://alexisbellot.github.io/Website/)
 
