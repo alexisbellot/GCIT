@@ -12,4 +12,9 @@ To get started, check *Tutorial.ipynb* which will guide you through the test fro
 
 If you have questions or comments about anything regarding this work, please do not hesitate to contact [Alexis](https://alexisbellot.github.io/Website/)
 
+## Use case on genetic data
+We include in the *CCLE Experiments* folder the code used in the real data experiment on Section 5 of the main body of this paper. The folder includes the data used and a simple script to test conditional independence of each feature and drug response given all other features.
+
+Pre-processing steps follow the code in https://github.com/tansey/hrt.
+
 
