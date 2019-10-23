@@ -3,6 +3,11 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+'''
+This code reproduces the real data experiments using the CCLE data.
+Preprocessing steps follow the code of W. Tansey at https://github.com/tansey/hrt.
+'''
+
 def load_ccle(drug_target='PLX4720', feature_type='both', normalize=False):
     '''
     :param drug target: specific drug we want to analyse
