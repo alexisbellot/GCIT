@@ -3,16 +3,15 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-from tqdm import tqdm
-
+from utils import *
 
 
 # %% GCIT Function
 '''
 Inputs:
- - z_train: Training confounders
- - x_train: First target variable
- - y_train: Second target variable
+ - z: Confounder variables, this is the conditioning set
+ - x: First target variable
+ - y: Second target variable
 
 Hyper-parameters (=Default values)
  - mu: WGAN parameter = 1
@@ -22,45 +21,43 @@ Hyper-parameters (=Default values)
 
 '''
 
-
-def correlation(X,Y):
-    X = X.reshape((len(X)))
-    Y = Y.reshape((len(Y)))
-    return np.abs(np.corrcoef(X, Y)[0, 1])
-
-def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=True, verbose=False, n_iter=1000,debug=False):
+def GCIT(x, y, z, statistic = "rdc", lamda = 10, normalize=True, verbose=False, n_iter=1000,debug=False):
 
     if normalize:
-        z_train = (z_train - z_train.min()) / (z_train.max() - z_train.min())
-        x_train = (x_train - x_train.min()) / (x_train.max() - x_train.min())
-        y_train = (y_train - y_train.min()) / (y_train.max() - y_train.min())
-
+        z = (z - z.min()) / (z.max() - z.min())
+        x = (x - x.min()) / (x.max() - x.min())
+        y = (y - y.min()) / (y.max() - y.min())
 
     # %% Parameters
     # 1. # of samples
-    n = len(z_train[:, 0])
+    n = len(z[:, 0])
 
+    # define training and testing subsets, training for learning the sampler and 
+    # testing for computing test statistic. Set 2/3 and 1/3 as default
+    x_train, y_train, z_train = x[:int(2*n/3),], y[:int(2*n/3),], z[:int(2*n/3),] 
+    x_test, y_test, z_test = x[int(2*n/3):,], y[int(2*n/3):,], z[int(2*n/3):,] 
+
+    n = len(z_train[:, 0])
+    
     # 2. # of confounders
     z_dim = len(z_train[0, :])
 
-    # 3. # of target variables of interest
-    x_dim = 1#len(x_train[0,:])
+    # 3. # of target variables of interest (can be changed if needed)
+    x_dim = 1
 
-    # 3. # of random dimensions
-    if z_dim < 20:
+    # 3. # of random and hidden dimensions
+    if z_dim <= 20:
         v_dim = int(3)
         h_dim = int(3)
 
     else:
         v_dim = int(z_dim / 10)
-
-        # 4. # of hidden dimensions
         h_dim = int(z_dim / 10)
 
-    # 5. # of minibatch
+    # 4. size of minibatch
     mb_size = 64
 
-    # 6. WGAN parameters
+    # 5. WGAN parameters
     eta = 10
     lr = 1e-4
 
@@ -70,7 +67,7 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
     def xavier_init(size):
         in_dim = size[0]
         xavier_stddev = 1. / tf.sqrt(in_dim / 2.)
-        return tf.random_normal(shape=size, stddev=xavier_stddev)
+        return tf.random.normal(shape=size, stddev=xavier_stddev)
 
     # 2. Sample from normal distribution: Random variable generation
     def sample_V(m, n):
@@ -95,19 +92,18 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
     # %% Placeholders
 
     # 1. Target Feature
-    X = tf.placeholder(tf.float32, shape=[None, x_dim])
+    X = tf.compat.v1.placeholder(tf.float32, shape=[None, x_dim])
     # 2. Target Permuted Feature
-    X_hat = tf.placeholder(tf.float32, shape=[None, x_dim])
+    X_hat = tf.compat.v1.placeholder(tf.float32, shape=[None, x_dim])
     # 3. Random Variable V
-    V = tf.placeholder(tf.float32, shape=[None, v_dim])
+    V = tf.compat.v1.placeholder(tf.float32, shape=[None, v_dim])
     # 3. Confounder Z
-    Z = tf.placeholder(tf.float32, shape=[None, z_dim])
+    Z = tf.compat.v1.placeholder(tf.float32, shape=[None, z_dim])
 
     # %% Network Building
 
-
-    # %% 1. WGAN Discriminator
-    # Input: tilde X
+    # %% 1. WGAN Discriminator 
+    # - one hidden layer as default even though more may be needed for complex data generation processes
     WD_W1 = tf.Variable(xavier_init([x_dim + z_dim, h_dim]))
     WD_b1 = tf.Variable(tf.zeros(shape=[h_dim]))
 
@@ -174,7 +170,6 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
         return WD_out
 
     # 3. MINE
-
     def MINE(x, x_hat):
         M_h1 = tf.nn.tanh(M_W1A * x + M_W1B * x_hat + M_b1)
         M_h2 = tf.nn.tanh(M_W2A * x + M_W2B * x_hat + M_b2)
@@ -185,7 +180,7 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
         return M_out, Exp_M_out
 
     # %% Combination across the networks
-    # 1. Generater Knockoffs
+    # 1. Generator
     G_sample = generator(Z, V)
 
     # 2. WGAN Outputs for real and fake
@@ -199,11 +194,9 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
     _, Exp_M_out = MINE(X_hat, G_sample)
 
     # 4. WGAN Loss Replacement of Clipping algorithm to Penalty term
-    # 1. Line 6 in Algorithm 1
-    eps = tf.random_uniform([mb_size, 1], minval=0., maxval=1.)
+    eps = tf.random.uniform([mb_size, 1], minval=0., maxval=1.)
     X_inter = eps * X + (1. - eps) * G_sample
 
-    # 2. Line 7 in Algorithm 1
     grad = tf.gradients(WGAN_discriminator(X_inter, Z), [X_inter])[0]
     grad_norm = tf.sqrt(tf.reduce_sum((grad) ** 2 + 1e-8, axis=1))
     grad_pen = eta * tf.reduce_mean((grad_norm - 1) ** 2)
@@ -213,18 +206,20 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
     WD_loss = tf.reduce_mean(WD_fake) - tf.reduce_mean(WD_real) + grad_pen
 
     # 2. MINE Loss
-    M_loss = lamda * (tf.reduce_sum(tf.reduce_mean(M_out, axis=0) - tf.log(tf.reduce_mean(Exp_M_out, axis=0))))
+    M_loss = lamda * (tf.reduce_sum(tf.reduce_mean(M_out, axis=0) - \
+                                    tf.math.log(tf.reduce_mean(Exp_M_out, axis=0))))
 
     # 3. Generator loss, aim make WD_fake high
     G_loss = -tf.reduce_mean(WD_fake) + lamda * M_loss
 
     # Solver
-    WD_solver = (tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5).minimize(WD_loss, var_list=theta_WD))
-    G_solver = (tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5).minimize(G_loss, var_list=theta_G))
-    M_solver = (tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5).minimize(-M_loss, var_list=theta_M))
+    WD_solver = (tf.compat.v1.train.AdamOptimizer(learning_rate=lr, beta1=0.5).minimize(WD_loss, \
+                                                                                        var_list=theta_WD))
+    G_solver = (tf.compat.v1.train.AdamOptimizer(learning_rate=lr, beta1=0.5).minimize(G_loss, var_list=theta_G))
+    M_solver = (tf.compat.v1.train.AdamOptimizer(learning_rate=lr, beta1=0.5).minimize(-M_loss, var_list=theta_M))
 
     # %% Sessions
-    sess = tf.Session()
+    sess = tf.compat.v1.Session()
     sess.run(tf.global_variables_initializer())
 
     Generator_loss = []
@@ -232,11 +227,10 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
     WDiscriminator_loss = []
 
     # %% Iterations
-    #tqdm_iter = tqdm(range(n_iter))
     for it in range(n_iter):
 
         for _ in range(5):
-            # %% WGAN, Discriminator and MINE Training
+            # %% WGAN and MINE Training
 
             # Random variable generation
             V_mb = sample_V(mb_size, v_dim)
@@ -247,12 +241,12 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
             X_mb = x_train[Z_idx]
             X_perm_mb = Permute(X_mb)
 
-
             # 1. WGAN Training
-            _, WD_loss_curr = sess.run([WD_solver, WD_loss], feed_dict={X: X_mb, Z: Z_mb, V: V_mb, X_hat: X_perm_mb})
+            _, WD_loss_curr = sess.run([WD_solver, WD_loss], \
+                                       feed_dict={X: X_mb, Z: Z_mb, V: V_mb, X_hat: X_perm_mb})
             # 2. MINE Training
-            _, M_loss_curr = sess.run([M_solver, M_loss], feed_dict={X: X_mb, Z: Z_mb, V: V_mb, X_hat: X_perm_mb})
-
+            _, M_loss_curr = sess.run([M_solver, M_loss], \
+                                      feed_dict={X: X_mb, Z: Z_mb, V: V_mb, X_hat: X_perm_mb})
 
         # Random variable generation
         V_mb = sample_V(mb_size, v_dim)
@@ -270,36 +264,33 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
         WDiscriminator_loss.append(WD_loss_curr)
         Mine_loss.append(M_loss_curr)
 
-        #tqdm_iter.set_description('Iter: {}, Generator_loss: {:.4}, WD_loss: {:.4},M_loss: {:.4}'.format(it,G_loss_curr,WD_loss_curr,M_loss_curr))
-
         # %% Intermediate Losses
-        if verbose and it % 500 == 0:
+        if verbose and it % 499 == 0:
             print('Iter: {}'.format(it))
             print('Generator_loss: {:.4}'.format(G_loss_curr))
             print('WD_loss: {:.4}'.format(WD_loss_curr))
             print('M_loss: {:.4}'.format(M_loss_curr))
             print()
-
+            
+        # stop training if discriminator loss is sufficiently low (heuristic)
+        if abs(WD_loss_curr) < 0.1:
+            break
+            
     if verbose:
         # plot training losses
         plt.plot(range(n_iter), WDiscriminator_loss, range(n_iter), Generator_loss, range(n_iter), Mine_loss)
-
         plt.legend(('WGAN Discriminator', 'Generator', 'MINE'),
                    loc='upper right')
         plt.title('Training losses')
         plt.tight_layout()
-
         plt.show()
 
-    # %% Output
-    #X_CI = sess.run([G_sample], feed_dict={X: x_train, Z: z_train, V: sample_V(n, v_dim)})[0]
-
-    #return X_CI, [WD_loss_curr, M_loss_curr]
-
+    # %% Compute test statistic
+    # 1. Number of samples for null computation
     n_samples = 1000
     rho = []
-    #y_train = y_train.reshape(len(y_train))
 
+    # 2. Choice of statistic
     if statistic == "corr":
         stat = correlation
     if statistic == "mmd":
@@ -308,24 +299,23 @@ def GCIT(x_train, y_train, z_train, statistic = "corr", lamda = 10, normalize=Tr
         stat = kolmogorov
     if statistic == "wilcox":
         stat = wilcox
-
+    if statistic == "rdc":
+        stat = rdc
+   
+    # 3. Generate and collect samples on testing data
     for sample in range(n_samples):
-        x_hat = sess.run([G_sample], feed_dict={X: x_train, Z: z_train, V: sample_V(n, v_dim)})[0]
-        #x_hat = x_hat.reshape(len(x_hat))
+        x_hat = sess.run([G_sample], feed_dict={Z: z_test, V: sample_V(len(z_test[:, 0]), v_dim)})[0]
+        rho.append(stat(x_hat, y_test))
 
-        rho.append(stat(x_hat, y_train))
+    # 4. p-value computation as a two-sided test
+    p_value = min(sum(rho < stat(x_test.reshape(len(x_test)), y_test)) / n_samples,
+                  sum(rho > stat(x_test.reshape(len(x_test)), y_test)) / n_samples)
 
-
-    p_value = sum(stat(x_train.reshape(len(x_train)), y_train)>rho)/n_samples
-
-
+    
     if debug:
         print('Statistics of x_hat ', stats.describe(x_hat))
-        print('Statistics of x_train ',stats.describe(x_train))
+        print('Statistics of x_train ',stats.describe(x_test))
         print('Statistics of generated rho ', stats.describe(rho))
-        print('Observed rho',stat(x_train.reshape(len(x_train)), y_train))
-
-    if p_value>0.975:
-        p_value = 1 - p_value
+        print('Observed rho',stat(x_test.reshape(len(x_test)), y_test))
 
     return(p_value)
